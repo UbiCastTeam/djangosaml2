@@ -15,6 +15,7 @@
 
 import base64
 import logging
+import urllib.parse
 
 from django.conf import settings
 from django.contrib import auth
@@ -126,6 +127,11 @@ def login(request,
                     })
 
     selected_idp = request.GET.get('idp', None)
+    if not selected_idp:
+        idp_param = get_custom_setting('SAML_IDP_PARAM')
+        if idp_param:
+            # For example, SAML_IDP_PARAM could be: 'entityID'
+            selected_idp = request.GET.get(idp_param, None)
     try:
         conf = get_config(config_loader_path, request)
     except SourceNotFound as excp:
@@ -147,6 +153,17 @@ def login(request,
     idps = available_idps(conf)
     if selected_idp is None and len(idps) > 1:
         logger.debug('A discovery process is needed')
+        wayf_url = get_custom_setting('SAML_WAYF_URL')
+        if wayf_url:
+            # For example, SAML_WAYF_URL could be:
+            # 'https://wayf.test.com?entityID=%(base_url)s&return=%(return_url)s'
+            if '%' in wayf_url:
+                site_url = ('https://' if request.is_secure() else 'http://') + request.get_host()
+                wayf_url = wayf_url % {
+                    'base_url': urllib.parse.quote_plus(site_url),
+                    'return_url': urllib.parse.quote_plus(site_url + request.get_full_path())
+                }
+            return HttpResponseRedirect(wayf_url)
         return render(request, wayf_template, {
                 'available_idps': idps.items(),
                 'came_from': came_from,
