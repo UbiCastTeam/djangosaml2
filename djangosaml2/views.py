@@ -17,7 +17,7 @@ import base64
 import logging
 from functools import wraps
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, quote_plus
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, SuspiciousOperation
@@ -226,7 +226,28 @@ class LoginView(SPConfigMixin, View):
 
         # is a embedded wayf or DiscoveryService needed?
         configured_idps = available_idps(conf)
-        selected_idp = request.GET.get("idp", None)
+        selected_idp = request.GET.get('idp', None)
+        if not selected_idp:
+            idp_param = get_custom_setting('SAML_IDP_PARAM')
+            if idp_param:
+                # For example, SAML_IDP_PARAM could be: 'entityID'
+                selected_idp = request.GET.get(idp_param, None)
+        if selected_idp is None and len(configured_idps) > 1:
+            logger.debug('A discovery process is needed trough WAYF')
+            wayf_url = get_custom_setting('SAML_WAYF_URL')
+            if wayf_url:
+                # For example, SAML_WAYF_URL could be:
+                # 'https://wayf.test.com?entityID=%(metadata_url)s&return=%(return_url)s'
+                if '%' in wayf_url:
+                    site_url = ('https://' if request.is_secure() else 'http://') + request.get_host()
+                    url_namespace = get_custom_setting('SAML_URL_NAMESPACE', '')
+                    if url_namespace:
+                        url_namespace += ':'
+                    wayf_url = wayf_url % {
+                        'metadata_url': quote_plus(site_url + reverse(url_namespace + 'saml2_metadata')),
+                        'return_url': quote_plus(site_url + request.get_full_path())
+                    }
+                return HttpResponseRedirect(wayf_url)
 
         self.conf = conf
         sso_kwargs = {}
@@ -242,8 +263,11 @@ class LoginView(SPConfigMixin, View):
                         "A discovery process is needed trough a" "Discovery Service: {}"
                     ).format(discovery_service)
                 )
+                url_namespace = get_custom_setting('SAML_URL_NAMESPACE', '')
+                if url_namespace:
+                    url_namespace += ':'
                 login_url = "{}?next={}".format(
-                    request.build_absolute_uri(reverse("saml2_login")),
+                    request.build_absolute_uri(url_namespace + reverse("saml2_login")),
                     quote(next_path, safe=""),
                 )
                 ds_url = "{}?entityID={}&return={}&returnIDParam=idp".format(
