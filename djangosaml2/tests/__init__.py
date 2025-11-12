@@ -887,7 +887,7 @@ class SAML2Tests(TestCase):
         _args, kwargs = prepare_for_auth_mock.call_args
         self.assertIn("sigalg", kwargs)
 
-    @override_settings(SAML2_DISCO_URL="https://that-ds.org/ds")
+    @override_settings(SAML_WAYF_URL="https://that-ds.org/ds")
     def test_discovery_service(self):
         settings.SAML_CONFIG = conf.create_conf(
             sp_host="sp.example.com",

@@ -191,7 +191,7 @@ Discovery Service
 =================
 If you want to use a SAML Discovery Service, all you need is adding::
 
-  SAML2_DISCO_URL = 'https://your.ds.example.net/'
+  SAML_WAYF_URL = 'https://your.ds.example.net/?entityID=%(entity_id)s&return=%(return_url)s&returnIDParam=%(idp_param)s'
 
 Of course, with the real URL of your preferred Discovery Service.
 
@@ -200,7 +200,7 @@ Idp hinting
 ===========
 If the SP uses an AIM Proxy it is possible to suggest the authentication IDP by adopting the `idphint` parameter. The name of the `idphint` parameter is default, but it can also be changed using this parameter::
 
-  SAML2_IDPHINT_PARAM = 'idphint'
+  SAML_IDPHINT_PARAM = 'idphint'
 
 This will ensure that the user will not get a possible discovery service page for the selection of the IdP to use for the SSO.
 When Djagosaml2 receives an HTTP request at the resource, web path, configured for the saml2 login, it will detect the presence of the `idphint` parameter. If this is present, the authentication request will report this URL parameter within the http request relating to the SAML2 SSO binding.

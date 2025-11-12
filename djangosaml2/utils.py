@@ -163,7 +163,7 @@ def add_param_in_url(url: str, param_key: str, param_value: str):
 
 
 def add_idp_hinting(request, http_response) -> bool:
-    idphin_param = getattr(settings, "SAML2_IDPHINT_PARAM", "idphint")
+    idphin_param = getattr(settings, "SAML_IDPHINT_PARAM", "idphint")
     urllib.parse.urlencode(request.GET)
 
     if idphin_param not in request.GET.keys():

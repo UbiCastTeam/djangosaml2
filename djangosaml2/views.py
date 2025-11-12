@@ -152,16 +152,16 @@ class LoginView(SPConfigMixin, View):
     """
 
     wayf_template = getattr(
-        settings, "SAML2_CUSTOM_WAYF_TEMPLATE", "djangosaml2/wayf.html"
+        settings, "SAML_CUSTOM_WAYF_TEMPLATE", "djangosaml2/wayf.html"
     )
     authorization_error_template = getattr(
         settings,
-        "SAML2_CUSTOM_AUTHORIZATION_ERROR_TEMPLATE",
+        "SAML_CUSTOM_AUTHORIZATION_ERROR_TEMPLATE",
         "djangosaml2/auth_error.html",
     )
     post_binding_form_template = getattr(
         settings,
-        "SAML2_CUSTOM_POST_BINDING_FORM_TEMPLATE",
+        "SAML_CUSTOM_POST_BINDING_FORM_TEMPLATE",
         "djangosaml2/post_binding_form.html",
     )
 
@@ -223,44 +223,53 @@ class LoginView(SPConfigMixin, View):
             # this is deprecated and it's here only for the doubts that something
             # would happen the day after I'll remove it! :)
             return self.unknown_idp(request, idp="unknown")
-
-        # is a embedded wayf or DiscoveryService needed?
-        configured_idps = available_idps(conf)
-        selected_idp = request.GET.get("idp", None)
-
         self.conf = conf
-        sso_kwargs = {}
+
+        configured_idps = available_idps(conf)
+        if not configured_idps:  # pragma: no cover
+            raise IdPConfigurationMissing("No IdP configured.")
+
+        idp_param = get_custom_setting("SAML_IDP_PARAM", "idp")
+        selected_idp = request.GET.get(idp_param, None)
 
         # Do we have a Discovery Service?
         if not selected_idp:
-            discovery_service = getattr(settings, "SAML2_DISCO_URL", None)
-            if discovery_service:
+            discovery_url = get_custom_setting("SAML_WAYF_URL")
+            if discovery_url:
                 # We have to build the URL to redirect to with all the information
                 # for the Discovery Service to know how to send the flow back to us
+                # Example of URL:
+                # "https://discovery.example/
+                # wayf/?entityID=%(entity_id)s&return=%(return_url)s&returnIDParam=%(idp_param)s"
                 logger.debug(
                     (
-                        "A discovery process is needed trough a" "Discovery Service: {}"
-                    ).format(discovery_service)
+                        "A discovery process is needed through a WAYF URL: {}"
+                    ).format(discovery_url)
                 )
-                login_url = "{}?next={}".format(
-                    request.build_absolute_uri(reverse("saml2_login")),
-                    quote(next_path, safe=""),
-                )
-                ds_url = "{}?entityID={}&return={}&returnIDParam=idp".format(
-                    discovery_service,
-                    quote(conf.entityid, safe=""),
-                    quote(login_url, safe=""),
-                )
-                return HttpResponseRedirect(ds_url)
+                if "%" in discovery_url:
+                    login_url = "{}?next={}".format(
+                        request.build_absolute_uri(request.path),
+                        quote(next_path, safe=""),
+                    )
+                    discovery_url = discovery_url % {
+                        # "metadata_url" is for compatibility with older versions
+                        "metadata_url": quote(conf.entityid, safe=""),
+                        "entity_id": quote(conf.entityid, safe=""),
+                        "return_url": quote(login_url, safe=""),
+                        "idp_param": quote(idp_param, safe=""),
+                    }
+                return HttpResponseRedirect(discovery_url)
 
             elif len(configured_idps) > 1:
-                logger.debug("A discovery process trough WAYF page is needed")
+                logger.debug("A discovery process is needed through a WAYF page")
                 return render(
                     request,
                     self.wayf_template,
                     {
                         "available_idps": configured_idps.items(),
                         "came_from": next_path,
+                        "login_base_url": request.path,
+                        "idp_param": idp_param,
                     },
                 )
 
@@ -313,6 +322,7 @@ class LoginView(SPConfigMixin, View):
         client = Saml2Client(conf)
 
         # SSO options
+        sso_kwargs = {}
         sign_requests = getattr(conf, "_sp_authn_requests_signed", False)
         if sign_requests:
             sso_kwargs["sigalg"] = getattr(
