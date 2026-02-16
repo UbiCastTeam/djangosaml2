@@ -17,7 +17,7 @@ import base64
 import logging
 from functools import wraps
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, SuspiciousOperation
@@ -30,7 +30,6 @@ from django.http import (
 )
 from django.shortcuts import render, resolve_url
 from django.template import TemplateDoesNotExist
-from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.html import escape
 from django.utils.module_loading import import_string
@@ -233,7 +232,8 @@ class LoginView(SPConfigMixin, View):
         selected_idp = request.GET.get(idp_param, None)
 
         # Do we have a Discovery Service?
-        if not selected_idp:
+        if not selected_idp and len(configured_idps) > 1:
+            next_uri = quote(next_path, safe="")
             discovery_url = get_custom_setting("SAML_WAYF_URL")
             if discovery_url:
                 # We have to build the URL to redirect to with all the information
@@ -242,15 +242,12 @@ class LoginView(SPConfigMixin, View):
                 # "https://discovery.example/
                 # wayf/?entityID=%(entity_id)s&return=%(return_url)s&returnIDParam=%(idp_param)s"
                 logger.debug(
-                    (
-                        "A discovery process is needed through a WAYF URL: {}"
-                    ).format(discovery_url)
+                    f"A discovery process is needed through a WAYF URL: {discovery_url}"
                 )
                 if "%" in discovery_url:
-                    login_url = "{}?next={}".format(
-                        request.build_absolute_uri(request.path),
-                        quote(next_path, safe=""),
-                    )
+                    # Use entity_id to get URL to use a constant URL
+                    parts = urlsplit(conf.entityid)
+                    login_url = f"{parts.scheme}://{parts.netloc}{request.path}?next={next_uri}"
                     discovery_url = discovery_url % {
                         # "metadata_url" is for compatibility with older versions
                         "metadata_url": quote(conf.entityid, safe=""),
@@ -260,14 +257,14 @@ class LoginView(SPConfigMixin, View):
                     }
                 return HttpResponseRedirect(discovery_url)
 
-            elif len(configured_idps) > 1:
+            else:
                 logger.debug("A discovery process is needed through a WAYF page")
                 return render(
                     request,
                     self.wayf_template,
                     {
                         "available_idps": configured_idps.items(),
-                        "came_from": next_path,
+                        "came_from": next_uri,
                         "login_base_url": request.path,
                         "idp_param": idp_param,
                     },

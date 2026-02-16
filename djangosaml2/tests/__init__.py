@@ -403,8 +403,8 @@ class SAML2Tests(TestCase):
         # a WAYF page should be displayed
         self.assertContains(response, "Where are you from?", status_code=200)
         for i in range(1, 4):
-            link = "/login/?idp=https://idp%d.example.com/simplesaml/saml2/idp/metadata.php&next=/"
-            self.assertContains(response, link % i)
+            link = f"/login/?idp=https://idp{i}.example.com/simplesaml/saml2/idp/metadata.php&next=%2F"
+            self.assertContains(response, link)
 
         # click on the second idp
         response = self.client.get(
