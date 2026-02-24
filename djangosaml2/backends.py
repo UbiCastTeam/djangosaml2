@@ -369,7 +369,7 @@ class Saml2Backend(ModelBackend):
                 if hasattr(user, "set_unusable_password"):
                     user.set_unusable_password()
                 created = True
-                logger.debug(f"New user created: {user}", exc_info=True)
+                logger.debug(f"New user created: {user}")
             else:
                 logger.exception(
                     f"The user does not exist, model: {UserModel._meta}, lookup: {user_query}"
