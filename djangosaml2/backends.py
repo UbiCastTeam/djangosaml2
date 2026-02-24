@@ -291,7 +291,7 @@ class Saml2Backend(ModelBackend):
                 user = UserModel(**{user_lookup_key: user_lookup_value})
                 user.set_unusable_password()
                 created = True
-                logger.debug(f"New user created: {user}", exc_info=True)
+                logger.debug(f"New user created: {user}")
             else:
                 logger.exception(
                     f"The user does not exist, model: {UserModel._meta}, lookup: {user_query_args}"
