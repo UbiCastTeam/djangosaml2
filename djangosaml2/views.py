@@ -726,13 +726,13 @@ class LogoutInitView(LoginRequiredMixin, SPConfigMixin, View):
             return self.handle_unsupported_slo_exception(request, _error)
 
         if not result:
-            logger.error(
+            logger.warning(
                 "Looks like the user %s is not logged in any IdP/AA", subject_id
             )
             return HttpResponseBadRequest("You are not logged in any IdP/AA")
 
         if len(result) > 1:
-            logger.error(
+            logger.warning(
                 "Sorry, I do not know how to logout from several sources. I will logout just from the first one"
             )
 
@@ -751,12 +751,12 @@ class LogoutInitView(LoginRequiredMixin, SPConfigMixin, View):
                     )
                     return HttpResponseRedirect(get_location(http_info))
                 else:
-                    logger.error("Unknown binding: %s", binding)
+                    logger.warning("Unknown binding: %s", binding)
                     return HttpResponseServerError("Failed to log out")
             # We must have had a soap logout
             return finish_logout(request, logout_info)
 
-        logger.error(
+        logger.warning(
             "Could not logout because there only the HTTP_REDIRECT is supported"
         )
         return HttpResponseServerError("Logout Binding not supported")
@@ -844,7 +844,7 @@ class LogoutView(SPConfigMixin, View):
                 # to finally send request to the IDP
                 return HttpResponse(http_info["data"])
             return HttpResponseRedirect(get_location(http_info))
-        logger.error("No SAMLResponse or SAMLRequest parameter found")
+        logger.warning("No SAMLResponse or SAMLRequest parameter found")
         return HttpResponseBadRequest("No SAMLResponse or SAMLRequest parameter found")
 
 
@@ -883,7 +883,7 @@ def finish_logout(request, response):
                 },
             )
 
-    logger.error("Unknown error during the logout")
+    logger.warning("Unknown error during the logout")
     return render(request, "djangosaml2/logout_error.html", {})
 
 
