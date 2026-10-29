@@ -34,6 +34,7 @@ from django.contrib.auth.models import AnonymousUser
 from saml2.config import SPConfig
 from saml2.s_utils import (
     UnknownSystemEntity,
+    UnsupportedBinding,
     decode_base64_and_inflate,
     deflate_and_base64_encode,
 )
@@ -308,12 +309,43 @@ class SAML2Tests(TestCase):
             metadata_file="remote_metadata_three_idps.xml",
         )
 
-        response = self.client.get(
-            reverse("saml2_login") + "?idp=<b>https://unknown.org</b>"
-        )
+        with self.assertNoLogs("djangosaml2", level="ERROR"):
+            response = self.client.get(
+                reverse("saml2_login") + "?idp=<b>https://unknown.org</b>"
+            )
         self.assertContains(
             response, "&lt;b&gt;https://unknown.org&lt;/b&gt;", status_code=403
         )
+
+    def test_login_entity_not_an_idp(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host="sp.example.com",
+            idp_hosts=["idp.example.com"],
+            metadata_file="remote_metadata_one_idp.xml",
+        )
+
+        with mock.patch(
+            "saml2.mdstore.MetadataStore.service",
+            side_effect=UnsupportedBinding("not an idp"),
+        ), self.assertNoLogs("djangosaml2", level="ERROR"):
+            response = self.client.get(
+                reverse("saml2_login") + "?idp=https://not-an-idp.org"
+            )
+        self.assertContains(response, "https://not-an-idp.org", status_code=403)
+
+    def test_login_idp_without_supported_binding(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host="sp.example.com",
+            idp_hosts=["idp.example.com"],
+            metadata_file="remote_metadata_one_idp.xml",
+        )
+
+        with mock.patch(
+            "djangosaml2.views.get_idp_sso_supported_bindings",
+            return_value=[],
+        ), self.assertNoLogs("djangosaml2", level="ERROR"):
+            response = self.client.get(reverse("saml2_login"))
+        self.assertContains(response, "does not support", status_code=403)
 
     def test_login_authn_context(self):
         sp_kwargs = {
@@ -590,6 +622,41 @@ class SAML2Tests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_assertion_consumer_service_invalid_response(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host="sp.example.com",
+            idp_hosts=["idp.example.com"],
+            metadata_file="remote_metadata_one_idp.xml",
+        )
+
+        for saml_response, status in (
+            ("not base64 !", 400),
+            (self.b64_for_post("<invalid xml"), 403),
+        ):
+            with self.subTest(saml_response=saml_response):
+                with self.assertNoLogs("djangosaml2", level="ERROR"):
+                    response = self.client.post(
+                        reverse("saml2_acs"), {"SAMLResponse": saml_response}
+                    )
+                self.assertEqual(response.status_code, status)
+
+    def test_assertion_consumer_service_unsolicited_response(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host="sp.example.com",
+            idp_hosts=["idp.example.com"],
+            metadata_file="remote_metadata_one_idp.xml",
+        )
+
+        # No outstanding query for this response
+        saml_response = auth_response("a0123456789abcdef0123456789abcdef", "student")
+        with self.assertNoLogs("djangosaml2", level="ERROR"):
+            response = self.client.post(
+                reverse("saml2_acs"),
+                {"SAMLResponse": self.b64_for_post(saml_response)},
+            )
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn(SESSION_KEY, self.client.session)
+
     def test_missing_param_to_assertion_consumer_service_request(self):
         # Send request without SAML2Response parameter
         response = self.client.post(reverse("saml2_acs"))
@@ -846,6 +913,52 @@ class SAML2Tests(TestCase):
             },
         )
         self.assertContains(response, "Logout error", status_code=403)
+
+    @override_settings(LOGOUT_REDIRECT_URL="/dashboard/")
+    def test_logout_without_saml_session(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host="sp.example.com",
+            idp_hosts=["idp.example.com"],
+            metadata_file="remote_metadata_one_idp.xml",
+        )
+        # User logged in without SAML
+        self.client.force_login(User.objects.create(username="user", password="pass"))
+
+        with self.assertNoLogs("djangosaml2", level="ERROR"):
+            response = self.client.get(reverse("saml2_logout"))
+        self.assertRedirects(response, "/dashboard/", fetch_redirect_response=False)
+        self.assertNotIn(SESSION_KEY, self.client.session)
+
+    def test_logout_service_invalid_response(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host="sp.example.com",
+            idp_hosts=["idp.example.com"],
+            metadata_file="remote_metadata_one_idp.xml",
+        )
+        self.do_login()
+
+        with self.assertNoLogs("djangosaml2", level="ERROR"):
+            response = self.client.get(
+                reverse("saml2_ls"),
+                {"SAMLResponse": deflate_and_base64_encode("<invalid xml")},
+            )
+        self.assertContains(response, "<h1>Logout error</h1>", status_code=200)
+
+    def test_logout_service_invalid_request(self):
+        settings.SAML_CONFIG = conf.create_conf(
+            sp_host="sp.example.com",
+            idp_hosts=["idp.example.com"],
+            metadata_file="remote_metadata_one_idp.xml",
+        )
+        self.do_login()
+
+        with self.assertNoLogs("djangosaml2", level="ERROR"):
+            response = self.client.get(
+                reverse("saml2_ls"),
+                {"SAMLRequest": deflate_and_base64_encode("<invalid xml")},
+            )
+        self.assertContains(response, "<h1>Logout error</h1>", status_code=400)
+        self.assertNotIn(SESSION_KEY, self.client.session)
 
     def test_finish_logout_renders_error_template(self):
         request = RequestFactory().get("/bar/foo")

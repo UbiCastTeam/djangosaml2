@@ -30,7 +30,7 @@ from django.utils.module_loading import import_string
 
 from saml2.config import SPConfig
 from saml2.mdstore import MetaDataMDX
-from saml2.s_utils import UnknownSystemEntity
+from saml2.s_utils import UnknownSystemEntity, UnsupportedBinding
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +80,11 @@ def get_idp_sso_supported_bindings(
                 idp_entity_id, "idpsso_descriptor", "single_sign_on_service"
             ).keys()
         )
-    except UnknownSystemEntity:
-        raise UnknownSystemEntity
+    except (UnknownSystemEntity, UnsupportedBinding):
+        raise
     except Exception as e:
         logger.exception(f"get_idp_sso_supported_bindings failed with: {e}")
+        return []
 
 
 def get_location(http_info):

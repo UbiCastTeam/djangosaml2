@@ -293,7 +293,7 @@ class Saml2Backend(ModelBackend):
                 created = True
                 logger.debug(f"New user created: {user}")
             else:
-                logger.exception(
+                logger.warning(
                     f"The user does not exist, model: {UserModel._meta}, lookup: {user_query_args}"
                 )
 
