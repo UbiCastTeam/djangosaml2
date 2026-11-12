@@ -29,7 +29,7 @@ def send(signal, sender, **kwargs):
     responses = signal.send_robust(sender=sender, **kwargs)
     for receiver, response in responses:
         if isinstance(response, Exception):
-            logger.error(
+            logger.warning(
                 "Signal receiver %s failed",
                 getattr(receiver, "__name__", receiver),
                 exc_info=response,

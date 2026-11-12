@@ -168,7 +168,7 @@ class LoginView(SPConfigMixin, View):
 
     def unknown_idp(self, request, idp):
         msg = f"Error: IdP EntityID {escape(idp)} was not found in metadata"
-        logger.exception(msg)
+        logger.warning(msg)
         return HttpResponse(msg, status=403)
 
     def load_sso_kwargs_scoping(self, sso_kwargs):
@@ -291,7 +291,8 @@ class LoginView(SPConfigMixin, View):
             supported_bindings = get_idp_sso_supported_bindings(
                 selected_idp, config=conf
             )
-        except saml2.s_utils.UnknownSystemEntity:
+        except (saml2.s_utils.UnknownSystemEntity, UnsupportedBinding):
+            # The entity is unknown or is not an IdP
             return self.unknown_idp(request, selected_idp)
 
         if binding not in supported_bindings:
@@ -312,11 +313,13 @@ class LoginView(SPConfigMixin, View):
                 )
                 binding = saml2.BINDING_HTTP_POST
             # if switched binding still not supported, give up
-            if binding not in supported_bindings:  # pragma: no cover
-                raise UnsupportedBinding(
-                    f"IDP {selected_idp} does not support "
+            if binding not in supported_bindings:
+                msg = (
+                    f"Error: IdP {escape(selected_idp)} does not support "
                     f"{saml2.BINDING_HTTP_POST} or {saml2.BINDING_HTTP_REDIRECT}"
                 )
+                logger.warning(msg)
+                return HttpResponse(msg, status=403)
 
         client = Saml2Client(conf)
 
@@ -359,7 +362,7 @@ class LoginView(SPConfigMixin, View):
                     **sso_kwargs,
                 )
             except TypeError as e:
-                logger.exception(f"{_msg}: {e}")
+                logger.warning(f"{_msg}: {e}")
                 return HttpResponse(_msg)
             else:
                 http_response = HttpResponseRedirect(get_location(result))
@@ -370,7 +373,7 @@ class LoginView(SPConfigMixin, View):
                 try:
                     location = client.sso_location(selected_idp, binding)
                 except TypeError as e:
-                    logger.exception(f"{_msg}: {e}")
+                    logger.warning(f"{_msg}: {e}")
                     return HttpResponse(_msg)
 
                 # create_authn_request expects "sign_alg" while
@@ -419,7 +422,7 @@ class LoginView(SPConfigMixin, View):
                     )
                 except TypeError as e:
                     _msg = f"Can't prepare the authentication for {selected_idp}"
-                    logger.exception(f"{_msg}: {e}")
+                    logger.warning(f"{_msg}: {e}")
                     return HttpResponse(_msg)
                 else:
                     http_response = HttpResponse(result["data"])
@@ -504,7 +507,7 @@ class AssertionConsumerServiceView(SPConfigMixin, View):
             )
         except (StatusError, ToEarly) as e:
             _exception = e
-            logger.exception("Error processing SAML Assertion.")
+            logger.warning("Error processing SAML Assertion.")
         except ResponseLifetimeExceed as e:
             _exception = e
             logger.info(
@@ -528,18 +531,18 @@ class AssertionConsumerServiceView(SPConfigMixin, View):
             logger.warning("Missing Authentication Context from IdP.", exc_info=True)
         except MissingKey as e:
             _exception = e
-            logger.exception(
+            logger.warning(
                 "SAML Identity Provider is not configured correctly: certificate key is missing!"
             )
         except UnsolicitedResponse as e:
             _exception = e
-            logger.exception("Received SAMLResponse when no request has been made.")
+            logger.warning("Received SAMLResponse when no request has been made.")
         except RequestVersionTooLow as e:
             _exception = e
-            logger.exception("Received SAMLResponse have a deprecated SAML2 VERSION.")
+            logger.warning("Received SAMLResponse have a deprecated SAML2 VERSION.")
         except Exception as e:
             _exception = e
-            logger.exception("SAMLResponse Error")
+            logger.warning("SAMLResponse Error")
 
         if _exception:
             return self.handle_acs_failure(request, exception=_exception)
@@ -761,6 +764,7 @@ class LogoutInitView(LoginRequiredMixin, SPConfigMixin, View):
 
     def get(self, request, *args, **kwargs):
         subject_id = _get_subject_id(request.saml_session)
+        _error = None
         if subject_id is None:
             logger.info(
                 "User %s logged out locally. No SAML session was present.",
@@ -775,10 +779,13 @@ class LogoutInitView(LoginRequiredMixin, SPConfigMixin, View):
         try:
             result = client.global_logout(subject_id)
         except LogoutError as exp:
-            logger.exception(f"Error Handled - SLO not supported by IDP: {exp}")
+            logger.warning(f"Error Handled - SLO not supported by IDP: {exp}")
             _error = exp
         except UnsupportedBinding as exp:
-            logger.exception(f"Error Handled - SLO - unsupported binding by IDP: {exp}")
+            logger.warning(f"Error Handled - SLO - unsupported binding by IDP: {exp}")
+            _error = exp
+        except Exception as exp:
+            logger.warning(f"Error Handled - SLO failed: {exp}")
             _error = exp
 
         auth.logout(request)
@@ -788,13 +795,13 @@ class LogoutInitView(LoginRequiredMixin, SPConfigMixin, View):
             return self.handle_unsupported_slo_exception(request, _error)
 
         if not result:
-            logger.error(
+            logger.warning(
                 "Looks like the user %s is not logged in any IdP/AA", subject_id
             )
             return HttpResponseBadRequest("You are not logged in any IdP/AA")
 
         if len(result) > 1:
-            logger.error(
+            logger.warning(
                 "Sorry, I do not know how to logout from several sources. I will logout just from the first one"
             )
 
@@ -812,12 +819,12 @@ class LogoutInitView(LoginRequiredMixin, SPConfigMixin, View):
                     )
                     return HttpResponseRedirect(get_location(http_info))
                 else:
-                    logger.error("Unknown binding: %s", binding)
+                    logger.warning("Unknown binding: %s", binding)
                     return HttpResponseServerError("Failed to log out")
             # We must have had a soap logout
             return finish_logout(request, logout_info)
 
-        logger.error(
+        logger.warning(
             "Could not logout because there only the HTTP_REDIRECT is supported"
         )
         return HttpResponseServerError("Logout Binding not supported")
@@ -867,7 +874,7 @@ class LogoutView(SPConfigMixin, View):
                 response = client.parse_logout_request_response(
                     data["SAMLResponse"], binding
                 )
-            except StatusError as e:
+            except Exception as e:
                 response = None
                 logger.warning(
                     f"Error logging out from remote provider: {e}", exc_info=True
@@ -887,12 +894,22 @@ class LogoutView(SPConfigMixin, View):
                 auth.logout(request)
                 return render(request, self.logout_error_template, status=403)
 
-            http_info = client.handle_logout_request(
-                data["SAMLRequest"],
-                subject_id,
-                binding,
-                relay_state=data.get("RelayState", ""),
-            )
+            try:
+                http_info = client.handle_logout_request(
+                    data["SAMLRequest"],
+                    subject_id,
+                    binding,
+                    relay_state=data.get("RelayState", ""),
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Error handling the logout request from remote provider: {e}. "
+                    "Performing local logout",
+                    exc_info=True,
+                )
+                state.sync()
+                auth.logout(request)
+                return render(request, self.logout_error_template, status=400)
             state.sync()
             auth.logout(request)
             if (
@@ -903,7 +920,7 @@ class LogoutView(SPConfigMixin, View):
                 # The IdP reply is a POST form. Render it with a nonce.
                 return render_logout_post_binding_form(request, http_info)
             return HttpResponseRedirect(get_location(http_info))
-        logger.error("No SAMLResponse or SAMLRequest parameter found")
+        logger.warning("No SAMLResponse or SAMLRequest parameter found")
         return HttpResponseBadRequest("No SAMLResponse or SAMLRequest parameter found")
 
 
@@ -948,7 +965,7 @@ def finish_logout(request, response):
                 },
             )
 
-    logger.error("Unknown error during the logout")
+    logger.warning("Unknown error during the logout")
     return render(request, "djangosaml2/logout_error.html", {})
 
 

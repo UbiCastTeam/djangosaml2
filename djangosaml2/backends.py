@@ -88,7 +88,7 @@ class Saml2Backend(ModelBackend):
                 logger.debug(f"name_id: {session_info['name_id']}")
                 user_lookup_value = session_info["name_id"].text
             else:
-                logger.error(
+                logger.warning(
                     "The nameid is not available. Cannot find user without a nameid."
                 )
                 user_lookup_value = None
@@ -112,7 +112,7 @@ class Saml2Backend(ModelBackend):
         if saml_attribute:
             return saml_attribute[0]
         else:
-            logger.error(
+            logger.warning(
                 "attributes[saml_attr] attribute value is missing. "
                 f"Either the user session is expired or your mapping is invalid.\n"
                 f"django_field: {django_field}\n"
@@ -134,7 +134,7 @@ class Saml2Backend(ModelBackend):
             return None
 
         if "ava" not in session_info:
-            logger.error('"ava" key not found in session_info')
+            logger.warning('"ava" key not found in session_info')
             return None
 
         idp_entityid = session_info["issuer"]
@@ -146,7 +146,7 @@ class Saml2Backend(ModelBackend):
         if not self.is_authorized(
             attributes, attribute_mapping, idp_entityid, assertion_info
         ):
-            logger.error("Request not authorized")
+            logger.warning("Request not authorized")
             self._send_authenticate(
                 request,
                 is_authorized=False,
@@ -161,7 +161,7 @@ class Saml2Backend(ModelBackend):
             session_info, attributes, attribute_mapping
         )
         if not user_lookup_value:
-            logger.error("Could not determine user identifier")
+            logger.warning("Could not determine user identifier")
             return None
 
         user, created = self.get_or_create_user(
@@ -359,7 +359,7 @@ class Saml2Backend(ModelBackend):
             else:
                 user = UserModel.objects.get(**user_query)
         except MultipleObjectsReturned:
-            logger.exception(
+            logger.warning(
                 f"Multiple users match, model: {UserModel._meta}, lookup: {user_query}",
             )
         except UserModel.DoesNotExist:
@@ -371,7 +371,7 @@ class Saml2Backend(ModelBackend):
                 created = True
                 logger.debug(f"New user created: {user}")
             else:
-                logger.exception(
+                logger.warning(
                     f"The user does not exist, model: {UserModel._meta}, lookup: {user_query}"
                 )
 

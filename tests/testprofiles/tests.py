@@ -322,7 +322,7 @@ class Saml2BackendTests(TestCase):
         self.assertTrue(user is None)
         self.assertFalse(created)
         self.assertIn(
-            "ERROR:djangosaml2:Multiple users match, model: testprofiles.testuser, lookup: {'age': ''}",
+            "WARNING:djangosaml2:Multiple users match, model: testprofiles.testuser, lookup: {'age': ''}",
             logs.output[0],
         )
 
@@ -342,7 +342,7 @@ class Saml2BackendTests(TestCase):
         self.assertTrue(user is None)
         self.assertFalse(created)
         self.assertIn(
-            "ERROR:djangosaml2:The user does not exist, model: testprofiles.testuser, lookup: {'username': 'paul'}",
+            "WARNING:djangosaml2:The user does not exist, model: testprofiles.testuser, lookup: {'username': 'paul'}",
             logs.output[0],
         )
 
